@@ -1,0 +1,34 @@
+[project]
+name = "hydraq-alpha"
+version = "0.1.0"
+description = "HydraQ Alpha - Microservice MLOps/QMLOps platform for Quantum Reservoir Computing (QRC)"
+readme = "PROJECT_CONTEXT.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic>=2.10",
+    "pydantic-settings",
+    "celery",
+    "redis",
+    "minio",
+    "torch",
+    "numpy>=2.0",
+    "scipy",
+    "httpx",
+    "websockets",
+]
+
+[dependency-groups]
+dev = [
+    "ruff",
+    "pytest",
+    "pytest-asyncio",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
