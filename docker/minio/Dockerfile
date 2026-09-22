@@ -1,11 +1,13 @@
 FROM golang:1.24-alpine AS build
 
+ARG MINIO_RELEASE=RELEASE.2025-10-15T17-29-55Z
+
 RUN apk add --no-cache git ca-certificates curl
 
 WORKDIR /src
 
-RUN git clone --depth 1 https://github.com/minio/minio.git . && \
-    CGO_ENABLED=0 go build -trimpath -tags kqueue -ldflags "-s -w" -o /usr/local/bin/minio .
+RUN git clone --depth 1 --branch ${MINIO_RELEASE} https://github.com/minio/minio.git . && \
+    CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /usr/local/bin/minio .
 
 RUN git clone --depth 1 https://github.com/minio/mc.git /mc && \
     cd /mc && \
