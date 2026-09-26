@@ -1,4 +1,6 @@
-from libs.storage.config import StorageConfig
-from libs.storage.s3 import S3StorageClient
+"""Storage library providing S3 integration with sync and async interfaces."""
 
-__all__ = ["S3StorageClient", "StorageConfig"]
+from libs.storage.config import StorageConfig
+from libs.storage.s3 import AsyncS3StorageClient, S3StorageClient
+
+__all__ = ["AsyncS3StorageClient", "S3StorageClient", "StorageConfig"]

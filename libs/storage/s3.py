@@ -1,10 +1,11 @@
 """S3-compatible object storage client built on MinIO SDK.
 
-Implements the Zero-RAM upload pattern via presigned URLs,
-delegating large file transfers directly between the client and MinIO
-without buffering through the application server's memory.
+Implements the Zero-RAM upload pattern via presigned URLs and provides
+both synchronous (for Celery workers) and asynchronous (for FastAPI event loop)
+clients without blocking execution threads.
 """
 
+import asyncio
 import io
 import logging
 from datetime import timedelta
@@ -18,23 +19,18 @@ logger = logging.getLogger(__name__)
 
 
 class S3StorageClient:
-    """MinIO S3 storage client with Zero-RAM presigned URL support.
-
-    Provides bucket management, presigned URL generation for direct
-    client-to-S3 uploads/downloads, and utility methods for small
-    payloads (metadata, checkpoints).
+    """Synchronous MinIO S3 storage client for worker processes and batch jobs.
 
     Attributes:
         config: Storage configuration instance.
-        client: Underlying ``minio.Minio`` SDK client.
+        client: Underlying minio.Minio SDK client instance.
     """
 
     def __init__(self, config: StorageConfig | None = None) -> None:
-        """Initialize the S3 storage client.
+        """Initialize the synchronous S3 storage client.
 
         Args:
-            config: Optional storage configuration. Uses default
-                ``StorageConfig()`` when not provided.
+            config: Optional configuration. Uses default StorageConfig when omitted.
         """
         self.config = config or StorageConfig()
         self.client = Minio(
@@ -47,12 +43,8 @@ class S3StorageClient:
     def ensure_buckets_exist(self) -> None:
         """Create default buckets if they do not already exist.
 
-        Iterates over ``config.default_buckets`` and creates each
-        bucket that is not yet present in the MinIO instance.
-
         Raises:
-            S3Error: If a MinIO API call fails for reasons other
-                than the bucket already existing.
+            S3Error: If a MinIO API call fails unexpectedly.
         """
         for bucket_name in self.config.default_buckets:
             if not self.client.bucket_exists(bucket_name):
@@ -67,16 +59,12 @@ class S3StorageClient:
         object_name: str,
         expires_seconds: int = 3600,
     ) -> str:
-        """Generate a presigned PUT URL for direct client upload.
-
-        Enables the Zero-RAM pattern: the API gateway returns this
-        URL to the client, which uploads directly to MinIO without
-        proxying data through application memory.
+        """Generate a presigned PUT URL for direct client upload (Zero-RAM pattern).
 
         Args:
             bucket: Target bucket name.
             object_name: Object key within the bucket.
-            expires_seconds: URL validity duration in seconds.
+            expires_seconds: URL validity duration in seconds (default: 3600).
 
         Returns:
             Presigned PUT URL string.
@@ -98,7 +86,7 @@ class S3StorageClient:
         Args:
             bucket: Source bucket name.
             object_name: Object key within the bucket.
-            expires_seconds: URL validity duration in seconds.
+            expires_seconds: URL validity duration in seconds (default: 3600).
 
         Returns:
             Presigned GET URL string.
@@ -113,8 +101,7 @@ class S3StorageClient:
         """Verify MinIO connectivity by listing buckets.
 
         Returns:
-            ``True`` if MinIO responds successfully, ``False`` on
-            any network or S3 error.
+            True if MinIO responds successfully, False on any network or S3 error.
         """
         try:
             self.client.list_buckets()
@@ -131,10 +118,6 @@ class S3StorageClient:
         content_type: str = "application/octet-stream",
     ) -> None:
         """Upload raw bytes directly into a bucket.
-
-        Intended for small payloads such as model metadata or
-        serialized configuration. For large files, prefer the
-        presigned URL pattern via ``generate_presigned_upload_url``.
 
         Args:
             bucket: Target bucket name.
@@ -170,3 +153,86 @@ class S3StorageClient:
         finally:
             response.close()
             response.release_conn()
+
+
+class AsyncS3StorageClient:
+    """Asynchronous wrapper for MinIO client for non-blocking FastAPI integration.
+
+    Delegates blocking socket I/O operations of the synchronous MinIO SDK
+    to Python's default thread pool executor via ``asyncio.to_thread``.
+    """
+
+    def __init__(
+        self,
+        config: StorageConfig | None = None,
+        sync_client: S3StorageClient | None = None,
+    ) -> None:
+        """Initialize the async adapter.
+
+        Args:
+            config: Optional StorageConfig.
+            sync_client: Optional pre-configured synchronous client.
+        """
+        self.sync_client = sync_client or S3StorageClient(config=config)
+        self.config = self.sync_client.config
+
+    async def ensure_buckets_exist(self) -> None:
+        """Ensure default buckets exist asynchronously without blocking event loop."""
+        await asyncio.to_thread(self.sync_client.ensure_buckets_exist)
+
+    def generate_presigned_upload_url(
+        self,
+        bucket: str,
+        object_name: str,
+        expires_seconds: int = 3600,
+    ) -> str:
+        """Generate presigned PUT URL.
+
+        Note: HMAC calculation is local CPU operation, no thread offloading needed.
+        """
+        return self.sync_client.generate_presigned_upload_url(
+            bucket=bucket,
+            object_name=object_name,
+            expires_seconds=expires_seconds,
+        )
+
+    def generate_presigned_download_url(
+        self,
+        bucket: str,
+        object_name: str,
+        expires_seconds: int = 3600,
+    ) -> str:
+        """Generate presigned GET URL."""
+        return self.sync_client.generate_presigned_download_url(
+            bucket=bucket,
+            object_name=object_name,
+            expires_seconds=expires_seconds,
+        )
+
+    async def check_health(self) -> bool:
+        """Perform MinIO health check without blocking event loop."""
+        return await asyncio.to_thread(self.sync_client.check_health)
+
+    async def upload_bytes(
+        self,
+        bucket: str,
+        object_name: str,
+        data: bytes,
+        content_type: str = "application/octet-stream",
+    ) -> None:
+        """Upload raw bytes to MinIO asynchronously."""
+        await asyncio.to_thread(
+            self.sync_client.upload_bytes,
+            bucket=bucket,
+            object_name=object_name,
+            data=data,
+            content_type=content_type,
+        )
+
+    async def download_bytes(self, bucket: str, object_name: str) -> bytes:
+        """Download raw bytes from MinIO asynchronously."""
+        return await asyncio.to_thread(
+            self.sync_client.download_bytes,
+            bucket=bucket,
+            object_name=object_name,
+        )

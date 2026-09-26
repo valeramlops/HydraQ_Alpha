@@ -7,7 +7,7 @@ RUN apk add --no-cache git ca-certificates curl
 WORKDIR /src
 
 RUN git clone --depth 1 --branch ${MINIO_RELEASE} https://github.com/minio/minio.git . && \
-    CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /usr/local/bin/minio .
+    RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /usr/local/bin/minio .
 
 RUN git clone --depth 1 https://github.com/minio/mc.git /mc && \
     cd /mc && \
